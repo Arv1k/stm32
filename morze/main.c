@@ -1,7 +1,3 @@
-/*
- * This example demonstrates how to use EXTI and System Timer
- */
-
 #include "stm32f0xx_ll_rcc.h"
 #include "stm32f0xx_ll_system.h"
 #include "stm32f0xx_ll_bus.h"
@@ -9,6 +5,7 @@
 #include "stm32f0xx_ll_exti.h"
 #include "stm32f0xx_ll_utils.h"
 #include "stm32f0xx_ll_cortex.h"
+#include "string.h"
 
 /**
   * System Clock Configuration
@@ -62,12 +59,7 @@ static void gpio_config(void)
     LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_GPIOC);
     LL_GPIO_SetPinMode(GPIOC, LL_GPIO_PIN_8, LL_GPIO_MODE_OUTPUT);
     LL_GPIO_SetPinMode(GPIOC, LL_GPIO_PIN_9, LL_GPIO_MODE_OUTPUT);
-    /*
-     * Turn on pull down resistors for external interrupt channels
-     */
-    LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_GPIOA);
-    LL_GPIO_SetPinPull(GPIOA, LL_GPIO_PIN_1, LL_GPIO_PULL_DOWN);
-    LL_GPIO_SetPinPull(GPIOA, LL_GPIO_PIN_0, LL_GPIO_PULL_DOWN);
+
     return;
 }
 
@@ -78,37 +70,30 @@ static void exti_config(void)
 {
     LL_APB1_GRP2_EnableClock(LL_APB1_GRP2_PERIPH_SYSCFG);
 
-    //LL_SYSCFG_SetEXTISource(LL_SYSCFG_EXTI_PORTA, LL_SYSCFG_EXTI_LINE1);
     LL_SYSCFG_SetEXTISource(LL_SYSCFG_EXTI_PORTA, LL_SYSCFG_EXTI_LINE0);
-    //LL_EXTI_EnableIT_0_31(LL_EXTI_LINE_1);
     LL_EXTI_EnableIT_0_31(LL_EXTI_LINE_0);
-
-    //LL_EXTI_EnableFallingTrig_0_31(LL_EXTI_LINE_1);
-    //LL_EXTI_EnableRisingTrig_0_31(LL_EXTI_LINE_1);
 
     LL_EXTI_EnableFallingTrig_0_31(LL_EXTI_LINE_0);
     LL_EXTI_EnableRisingTrig_0_31(LL_EXTI_LINE_0);
-    /*
-     * Setting interrupts
-     */
+
     NVIC_EnableIRQ(EXTI0_1_IRQn);
     NVIC_SetPriority(EXTI0_1_IRQn, 0);
 }
 
-
-/**
- * Timer
+/*
+ * Handler for button
  */
-static int milliseconds = 0;
 
-static char buffer[100] = "";
-static int pc = 0;
+static int milliseconds = 0; // "system" time
+
+static char buffer[500] = ""; // buffer for word
+static int pc = 0; // current number of elements in buffer
 
 const int anti_bounce = 70;
 const int dot = 400;
 
-static int ms_old = 0;
-static int is_word = 0;
+static int ms_old = 0; // here saved the last time when we clicked button
+static int is_word = 0; // flag for words
 
 void EXTI0_1_IRQHandler(void)
 {
@@ -120,10 +105,11 @@ void EXTI0_1_IRQHandler(void)
         return;
     }
 
-    is_word = 1;
+    is_word = 1; // flag for letters
+
     static int is_sign = 0;
     if (!is_sign) {
-        if (cur > dot && pc) buffer[pc++] = 0;
+        if (cur > dot && pc) buffer[pc++] = 3;
 
         is_sign = 1;
         ms_old = ms;
@@ -181,54 +167,83 @@ static void systick_config(void)
  * Count up to counter_top then switch led
  * (to make blinking more visible)
  */
+
+void word_handler() {
+    is_word = 0;
+
+    LL_GPIO_ResetOutputPin(GPIOC, LL_GPIO_PIN_8);
+
+    delay();
+    delay();
+
+    buffer[pc] = 0;
+
+    char* hey = strchr(buffer, 3);
+
+
+    // for (int i = 0; i < pc; i++) {
+    //     if (buffer[i] == 1) {
+    //         LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
+    //
+    //         delay();
+    //
+    //         LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
+    //
+    //         delay();
+    //     }
+    //
+    //     if (buffer[i] == 2) {
+    //         LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
+    //
+    //         delay();
+    //         delay();
+    //         delay();
+    //
+    //         LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
+    //
+    //         delay();
+    //     }
+    //
+    //     if (buffer[i] == 3) {
+    //         LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_9);
+    //
+    //         delay();
+    //         delay();
+    //         delay();
+    //
+    //         LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_9);
+    //
+    //         delay();
+    //     }
+    //
+    //     buffer[i] = 0;
+    // }
+
+    pc = 0;
+    milliseconds = 0;
+    ms_old = 0;
+
+    LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_9);
+    LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
+
+    delay();
+    delay();
+
+    LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_9);
+    LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
+
+}
+
 void SysTick_Handler(void)
 {
-    if (is_word) {
-        int cur = milliseconds - ms_old;
-        if (cur > dot*4) {
-            is_word = 0;
+    if (is_word)
+        if (milliseconds - ms_old > dot*4) word_handler;
 
-            LL_GPIO_ResetOutputPin(GPIOC, LL_GPIO_PIN_8);
-            delay();
-            delay();
-
-            for (int i = 0; i < pc; i++) {
-                if (buffer[i] == 1) {
-                    LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
-
-                    delay();
-                    LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
-                    delay();
-                }
-
-                if (buffer[i] == 2) {
-                    LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
-
-                    delay();
-                    delay();
-                    delay();
-                    LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
-                    delay();
-                }
-
-                if (buffer[i] == 0) {
-                    LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_9);
-
-                    delay();
-                    delay();
-                    delay();
-                    LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_9);
-                    delay();
-                }
-
-                buffer[i] = 0;
-            }
-
-            pc = 0;
-            milliseconds = 0;
-            ms_old = 0;
-        }
-    }
+        /** TODO
+         * This is awful. Please, change it
+         * change to a normal counter without
+         * stopping SysTick_Handler() func.
+         */
 
     milliseconds++;
 }
@@ -241,8 +256,10 @@ int main(void)
     systick_config();
 
     LL_GPIO_SetOutputPin(GPIOC, LL_GPIO_PIN_8);
+
     delay();
     delay();
+
     LL_GPIO_ResetOutputPin(GPIOC, LL_GPIO_PIN_8);
 
     while (1);
