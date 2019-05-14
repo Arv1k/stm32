@@ -5,6 +5,7 @@
 #include "stm32f0xx_ll_exti.h"
 #include "stm32f0xx_ll_utils.h"
 #include "stm32f0xx_ll_cortex.h"
+#include "stm32f0xx_ll_usart.h"
 #include "string.h"
 
 /**
@@ -56,6 +57,7 @@ static void gpio_config(void)
     /*
      * Configure LEDs
      */
+    LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_GPIOA);
     LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_GPIOC);
     LL_GPIO_SetPinMode(GPIOC, LL_GPIO_PIN_8, LL_GPIO_MODE_OUTPUT);
     LL_GPIO_SetPinMode(GPIOC, LL_GPIO_PIN_9, LL_GPIO_MODE_OUTPUT);
@@ -78,6 +80,49 @@ static void exti_config(void)
 
     NVIC_EnableIRQ(EXTI0_1_IRQn);
     NVIC_SetPriority(EXTI0_1_IRQn, 0);
+}
+
+static void usart_config(void)
+{
+    /*
+     * Setting USART pins
+     */
+    LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_GPIOA);
+    //USART1_TX
+    LL_GPIO_SetPinMode(GPIOA, LL_GPIO_PIN_9, LL_GPIO_MODE_ALTERNATE);
+    LL_GPIO_SetAFPin_8_15(GPIOA, LL_GPIO_PIN_9, LL_GPIO_AF_1);
+    LL_GPIO_SetPinSpeed(GPIOA, LL_GPIO_PIN_9, LL_GPIO_SPEED_FREQ_HIGH);
+    //USART1_RX
+    LL_GPIO_SetPinMode(GPIOA, LL_GPIO_PIN_10, LL_GPIO_MODE_ALTERNATE);
+    LL_GPIO_SetAFPin_8_15(GPIOA, LL_GPIO_PIN_10, LL_GPIO_AF_1);
+    LL_GPIO_SetPinSpeed(GPIOA, LL_GPIO_PIN_10, LL_GPIO_SPEED_FREQ_HIGH);
+    /*
+     * USART Set clock source
+     */
+    LL_APB1_GRP2_EnableClock(LL_APB1_GRP2_PERIPH_USART1);
+    LL_RCC_SetUSARTClockSource(LL_RCC_USART1_CLKSOURCE_PCLK1);
+    /*
+     * USART Setting
+     */
+    LL_USART_SetTransferDirection(USART1, LL_USART_DIRECTION_TX_RX);
+    LL_USART_SetParity(USART1, LL_USART_PARITY_NONE);
+    LL_USART_SetDataWidth(USART1, LL_USART_DATAWIDTH_8B);
+    LL_USART_SetStopBitsLength(USART1, LL_USART_STOPBITS_1);
+    LL_USART_SetTransferBitOrder(USART1, LL_USART_BITORDER_LSBFIRST);
+    LL_USART_SetBaudRate(USART1, SystemCoreClock, LL_USART_OVERSAMPLING_16, 115200);
+    LL_USART_EnableIT_IDLE(USART1);
+    LL_USART_EnableIT_RXNE(USART1);
+    /*
+     * USART turn on
+     */
+    LL_USART_Enable(USART1);
+    while (!(LL_USART_IsActiveFlag_TEACK(USART1) && LL_USART_IsActiveFlag_REACK(USART1)));
+    /*
+     * Turn on NVIC interrupt line
+     */
+    NVIC_SetPriority(USART1_IRQn, 0);
+    NVIC_EnableIRQ(USART1_IRQn);
+    return;
 }
 
 /*
@@ -154,8 +199,7 @@ void EXTI0_1_IRQHandler(void)
     asm (".word 0x11ffff"); //60000
 }
 
-static void systick_config(void)
-{
+static void systick_config(void) {
     LL_InitTick(48000000, 1000);
     LL_SYSTICK_EnableIT();
     NVIC_SetPriority(SysTick_IRQn, 0);
@@ -165,7 +209,45 @@ static void systick_config(void)
  static char buf_send[20] = "";
  static int pc_send = 0;
 
- void push_ASCII(int pseudo_num) {
+char mail[64] = "";
+int word_is_full = 0;
+
+ static void send_message(char* buffer)
+ {
+     uint32_t i = 0;
+     while (buffer[i] != '\0')
+     {
+       while(!LL_USART_IsActiveFlag_TXE(USART1));
+       LL_USART_TransmitData8(USART1, buffer[i]);
+       i++;
+       while (!LL_USART_IsActiveFlag_TC(USART1));
+     }
+     //while (!LL_USART_IsActiveFlag_TC(USART1));
+
+     LL_GPIO_SetOutputPin(GPIOC, LL_GPIO_PIN_8);
+
+     return;
+ }
+
+ void USART1_IRQHandler(void)
+ {
+     static uint32_t i = 0;
+
+     if(LL_USART_IsActiveFlag_RXNE(USART1))
+     {
+       mail[i] = LL_USART_ReceiveData8(USART1);
+       i++;
+     }
+     else
+     {
+       i = 0;
+       LL_USART_ClearFlag_IDLE(USART1);
+       word_is_full = 1;
+     }
+
+ }
+
+void push_ASCII(int pseudo_num) {
      switch (pseudo_num) {
          case 12:    buf_send[pc_send++] = 'A' + 7;
                      break;
@@ -274,6 +356,9 @@ static void systick_config(void)
 
          case 22222: buf_send[pc_send++] = '7'; // 10
                      break;
+
+         default:    buf_send[pc_send++] = '\n';
+                     break;
      }
 }
 
@@ -281,60 +366,84 @@ void word_handler() {
     is_word = 0;
 
     LL_GPIO_ResetOutputPin(GPIOC, LL_GPIO_PIN_8);
+    delay();
+    delay();
 
     buffer[pc] = 0;
 
     int pseudo_num = 0;
     for (int i = 0; i <= pc; i++) {
-        if (buffer[i] - 48 == 3 || !buffer[i]) {
+        if (buffer[i] == 3 || !buffer[i]) {
             push_ASCII(pseudo_num);
 
             pseudo_num = 0;
             continue;
         }
 
-        pseudo_num = pseudo_num*10 + (buffer[i] - 48);
+        pseudo_num = pseudo_num*10 + buffer[i];
     }
 
     buf_send[pc_send] = 0;
-    // for (int i = 0; i < pc; i++) {
-    //     if (buffer[i] == 1) {
-    //         LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
+    for (int i = 0; i < pc; i++) {
+        if (buffer[i] == 1) {
+            LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
+
+            delay();
+
+            LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
+
+            delay();
+        }
+
+        if (buffer[i] == 2) {
+            LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
+
+            delay();
+            delay();
+            delay();
+
+            LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
+
+            delay();
+        }
+
+        if (buffer[i] == 3) {
+            LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_9);
+
+            delay();
+            delay();
+            delay();
+
+            LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_9);
+
+            delay();
+        }
+
+        buffer[i] = 0;
+    }
+
+    // if (buf_send[0] == 'Z') {
+    //     LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_9);
+    //     LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
     //
-    //         delay();
+    //     delay();
+    //     delay();
     //
-    //         LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
+    //     LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_9);
+    //     LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
     //
-    //         delay();
-    //     }
-    //
-    //     if (buffer[i] == 2) {
-    //         LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
-    //
-    //         delay();
-    //         delay();
-    //         delay();
-    //
-    //         LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
-    //
-    //         delay();
-    //     }
-    //
-    //     if (buffer[i] == 3) {
-    //         LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_9);
-    //
-    //         delay();
-    //         delay();
-    //         delay();
-    //
-    //         LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_9);
-    //
-    //         delay();
-    //     }
-    //
-    //     buffer[i] = 0;
+    //     delay();
+    //     delay();
     // }
 
+    send_message(buf_send);
+
+     delay();
+     delay();
+     LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
+
+
+    pc_send = 0;
     pc = 0;
     milliseconds = 0;
     ms_old = 0;
@@ -348,6 +457,8 @@ void word_handler() {
     LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_9);
     LL_GPIO_TogglePin(GPIOC, LL_GPIO_PIN_8);
 
+    delay();
+    delay();
 }
 
 void SysTick_Handler(void)
@@ -370,6 +481,7 @@ int main(void)
     gpio_config();
     exti_config();
     systick_config();
+    usart_config();
 
     LL_GPIO_SetOutputPin(GPIOC, LL_GPIO_PIN_8);
 
@@ -377,6 +489,8 @@ int main(void)
     delay();
 
     LL_GPIO_ResetOutputPin(GPIOC, LL_GPIO_PIN_8);
+
+    //send_message("12345");
 
     while (1);
     return 0;
