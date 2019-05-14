@@ -8,6 +8,9 @@
 #include "stm32f0xx_ll_gpio.h"
 #include "stm32f0xx_ll_usart.h"
 
+#include "xprintf.h"
+#include "oled_driver.h"
+
 char mail[64] = "";
 char word_is_full = 0;
 
@@ -118,6 +121,7 @@ static void send_message(char* buffer)
       while(!LL_USART_IsActiveFlag_TXE(USART1));
       LL_USART_TransmitData8(USART1, buffer[i]);
       i++;
+      //while (!LL_USART_IsActiveFlag_TC(USART1));
     }
     while (!LL_USART_IsActiveFlag_TC(USART1));
 
@@ -133,29 +137,79 @@ void USART1_IRQHandler(void)
     {
       mail[i] = LL_USART_ReceiveData8(USART1);
       i++;
+      LL_GPIO_SetOutputPin(GPIOC, LL_GPIO_PIN_9);
     }
-    else
+    if (LL_USART_IsActiveFlag_IDLE(USART1))
     {
-      i = 0;
-      LL_USART_ClearFlag_IDLE(USART1);
-      word_is_full = 1;
+        word_is_full = 1;
+        mail[i] = '\0';
+        i = 0;
+        LL_USART_ClearFlag_IDLE(USART1);
     }
 
 }
+
+static void decoder(void)
+{
+  int i = 0;
+  while(mail[i] != '\0')
+  {
+    if (mail[i] > 'G')
+      mail[i] -= 7;
+    else
+    {
+      if (mail[i] == 'G')
+        mail[i] = 'Z';
+      if (mail[i] == 'F')
+        mail[i] = 'Y';
+      if (mail[i] == 'E')
+        mail[i] = 'X';
+      if (mail[i] == 'D')
+        mail[i] = 'W';
+      if (mail[i] == 'C')
+        mail[i] = 'V';
+      if (mail[i] == 'B')
+        mail[i] = 'U';
+      if (mail[i] == 'A')
+        mail[i] = 'T';
+    }
+    i++;
+  }
+  return;
+}
+
+static void printf_config(void)
+{
+    xdev_out(oled_putc);
+    return;
+}
+
 int main(void)
 {
     rcc_config();
     gpio_config();
+    oled_config();
+    printf_config();
     usart_config();
 
-    send_message("12");
-    if (mail[1] == '2')
-    {
-      //LL_GPIO_SetOutputPin(GPIOC, LL_GPIO_PIN_9);
-    }
+    //xprintf("Airat pidoras\n");
+    //oled_update();
+
+    //send_message("123");
+    //xprintf("%s", mail);
+    //oled_update();
+
 
     while(1)
-    {}
+    {
+      if(word_is_full == 1)
+      {
+        decoder();
+        xprintf("%s\n", mail);
+        oled_update();
+        word_is_full = 0;
+      }
+    }
 
     return 0;
 }
