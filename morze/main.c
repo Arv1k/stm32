@@ -196,7 +196,7 @@ void EXTI0_1_IRQHandler(void)
     asm ("cmp r6, #0");
     asm ("bne delay+0x4");
     asm ("pop {r7, pc}");
-    asm (".word 0x11ffff"); //60000
+    asm (".word 0x5ffff"); //60000
 }
 
 static void systick_config(void) {
@@ -309,7 +309,7 @@ void push_ASCII(int pseudo_num) {
          case 2:     buf_send[pc_send++] = 'A'; // T
                      break;
 
-         case 1122:  buf_send[pc_send++] = 'B'; // U
+         case 112:  buf_send[pc_send++] = 'B'; // U
                      break;
 
          case 1112:  buf_send[pc_send++] = 'C'; // V
